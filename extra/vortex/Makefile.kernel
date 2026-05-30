@@ -1,0 +1,91 @@
+VORTEX_HOME ?= $(HOME)/vortex
+VORTEX_BUILD ?= $(VORTEX_HOME)/build
+VORTEX_PATH ?=
+
+VORTEX_CONFIG_MK ?= $(VORTEX_BUILD)/config.mk
+
+ifeq ($(strip $(VORTEX_CONFIG_MK)),)
+$(error Unable to find Vortex config.mk. Set VORTEX_HOME/VORTEX_BUILD)
+endif
+
+include $(VORTEX_CONFIG_MK)
+
+VX_SRCS ?= kernel.cpp
+KERNEL_LIB ?= vortex2
+VORTEX_RT_PATH ?= $(if $(VORTEX_PATH),$(VORTEX_PATH)/runtime/lib,$(VORTEX_BUILD)/sw/runtime)
+VORTEX_KN_PATH ?= $(if $(VORTEX_PATH),$(VORTEX_PATH)/kernel/lib$(XLEN),$(VORTEX_BUILD)/sw/kernel)
+SW_COMMON_DIR ?= $(VORTEX_HOME)/sw/common
+
+ifeq ($(XLEN),64)
+	ifeq ($(EXT_V_ENABLE),1)
+		VX_CFLAGS += -march=rv64imafdv_zve64d -mabi=lp64d
+	else
+		VX_CFLAGS += -march=rv64imafd -mabi=lp64d
+	endif
+	STARTUP_ADDR ?= 0x180000000
+else
+	ifeq ($(EXT_V_ENABLE),1)
+		VX_CFLAGS += -march=rv32imafv_zve32f -mabi=ilp32f
+	else
+		VX_CFLAGS += -march=rv32imaf -mabi=ilp32f
+	endif
+	STARTUP_ADDR ?= 0x80000000
+endif
+
+LLVM_CFLAGS += --target=riscv$(XLEN)-unknown-elf
+LLVM_CFLAGS += --sysroot=$(RISCV_SYSROOT)
+LLVM_CFLAGS += --gcc-toolchain=$(RISCV_TOOLCHAIN_PATH)
+LLVM_CFLAGS += -Xclang -target-feature -Xclang +xvortex
+LLVM_CFLAGS += -Xclang -target-feature -Xclang +zicond
+LLVM_CFLAGS += -mllvm -disable-loop-idiom-all
+
+VX_CXX = $(LLVM_PATH)/bin/clang++ $(LLVM_CFLAGS)
+VX_DP  = $(LLVM_PATH)/bin/llvm-objdump
+VX_CP  = $(LLVM_PATH)/bin/llvm-objcopy
+
+VX_CFLAGS += -O3 -mcmodel=medany -fno-rtti -fno-exceptions -nostartfiles -nostdlib -fdata-sections -ffunction-sections
+VX_CFLAGS += -I$(VORTEX_HOME)/sw/kernel/include -I$(VORTEX_BUILD)/sw -I$(VORTEX_BUILD)/hw -I$(SW_COMMON_DIR)
+VX_CFLAGS += -DXLEN_$(XLEN) -DNDEBUG -D__VORTEX__
+VX_CFLAGS += $(CONFIGS)
+XCONFIGS := $(shell python3 $(VORTEX_BUILD)/ci/gen_config.py --config=$(VORTEX_HOME)/VX_config.toml --cflags='$(CONFIGS) -DVX_CFG_XLEN=$(XLEN)')
+VX_CFLAGS += $(XCONFIGS)
+
+VX_LIBS += -L$(LIBC_PATH)/lib -lm -lc
+VX_LIBS += $(LIBCRT_PATH)/lib/baremetal/libclang_rt.builtins-riscv$(XLEN).a
+VX_LDFLAGS += -Wl,-Bstatic,--gc-sections,-T,$(VORTEX_HOME)/sw/kernel/scripts/link$(XLEN).ld,--defsym=STARTUP_ADDR=$(STARTUP_ADDR)
+VX_LDFLAGS += $(VORTEX_KN_PATH)/lib$(KERNEL_LIB).a $(VX_LIBS)
+
+VX_STARTUP_SRC := $(VORTEX_HOME)/sw/kernel/src/vx_start.S
+VX_KMU_FLAG := $(if $(filter vortex2,$(KERNEL_LIB)),-DKMU_ENABLE)
+VX_APP_OBJS = $(addsuffix .o, $(basename $(notdir $(VX_SRCS))))
+KERNEL_STARTUP := $(VORTEX_HOME)/sw/kernel/scripts/kernel_startup.sh
+
+CONFIG_STAMP = config.stamp
+
+all: kernel.vxbin
+
+$(CONFIG_STAMP): FORCE
+	@printf '%s\n' '$(VX_CFLAGS)' '$(VX_LDFLAGS)' > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+FORCE:
+
+$(VORTEX_KN_PATH)/lib$(KERNEL_LIB).a:
+	$(MAKE) -C $(VORTEX_KN_PATH)
+
+vx_start.o: $(VX_SRCS) $(VORTEX_KN_PATH)/lib$(KERNEL_LIB).a $(CONFIG_STAMP)
+	$(VX_CXX) $(VX_CFLAGS) -std=c++17 -Wall -Wextra -Wno-unused-parameter -c $(VX_SRCS)
+	$(VX_CXX) $(VX_CFLAGS) -DNEED_GP -DNEED_TLS -DNEED_INITFINI $(VX_KMU_FLAG) -c $(VX_STARTUP_SRC) -o $@
+	$(VX_CXX) $(VX_CFLAGS) $@ $(VX_APP_OBJS) $(VX_LDFLAGS) -o $@.elf
+	$(VX_CXX) $(VX_CFLAGS) $$($(KERNEL_STARTUP) $(VX_DP) $@.elf) $(VX_KMU_FLAG) -c $(VX_STARTUP_SRC) -o $@ && rm -f $@.elf
+
+kernel.elf: vx_start.o $(VX_SRCS) $(VORTEX_KN_PATH)/lib$(KERNEL_LIB).a $(CONFIG_STAMP)
+	$(VX_CXX) $(VX_CFLAGS) vx_start.o $(VX_APP_OBJS) $(VX_LDFLAGS) -o $@
+
+kernel.vxbin: kernel.elf
+	OBJCOPY=$(VX_CP) $(VORTEX_HOME)/sw/kernel/scripts/vxbin.py $< $@
+
+kernel.dump: kernel.elf
+	$(VX_DP) -D $< > $@
+
+clean:
+	rm -f *.o *.elf *.vxbin *.dump $(CONFIG_STAMP) $(CONFIG_STAMP).tmp

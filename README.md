@@ -1,5 +1,24 @@
 <div align="center">
 
+<div style="display: flex; justify-content: center; align-items: center; gap: 20px;">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="/docs/logo_tiny_light.svg">
+    <img alt="tinygrad logo" src="/docs/logo_tiny_dark.svg" width="40%" height="40%">
+  </picture>
+  <img alt="vortex logo" src="/docs/logo_vortex.png" width="20%" height="20%">
+</div>
+
+tinyvortex: An MLSys GPU design-space exploration platform built on a [tinygrad](https://github.com/tinygrad/tinygrad) fork targeting the [Vortex GPGPU](https://github.com/vortexgpgpu/vortex)
+
+Visit [tinyvortex.md](tinyvortex.md) to get started!
+
+</div>
+
+---
+
+---
+<div align="center">
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="/docs/logo_tiny_light.svg">
   <img alt="tiny corp logo" src="/docs/logo_tiny_dark.svg" width="50%" height="50%">

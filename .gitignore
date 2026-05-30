@@ -62,6 +62,7 @@ comgr_*
 site/
 profile_stats
 *.log
+trace/ramulator.log.*
 target
 .mypy_cache
 mutants
