@@ -70,3 +70,6 @@ mutants
 dagre/
 graphlib/
 uv.lock
+
+# Local workshop manuscript, figures, and derived paper data.
+paper/
